@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 
 st.set_page_config(page_title="Cazin Docs", page_icon="🏛️", layout="wide")
 
@@ -19,10 +20,21 @@ def load_data():
         st.error("⚠️ Fajl 'data.csv' nije pronađen.")
         return pd.DataFrame()
 
+@st.cache_data
+def load_full_text():
+    """Učitava JSON sa punim tekstom dokumenata"""
+    try:
+        with open('documents_text.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except FileNotFoundError:
+        return []
+
 df = load_data()
+full_text_docs = load_full_text()
 
 if not df.empty:
-    # --- STATISTIKA (Grafikon) ---
+    # --- STATISTIKA ---
     with st.expander("📊 Pogledaj statistiku dokumenata (Klikni za prikaz)"):
         col1, col2 = st.columns(2)
         with col1:
@@ -45,24 +57,62 @@ if not df.empty:
     
     godine = ['Sve'] + sorted(df['godina'].unique().tolist(), reverse=True)
     selected_godina = st.sidebar.selectbox("Godina:", godine)
-    search_query = st.sidebar.text_input("Pretraga po nazivu:")
+    
+    # --- NOVO: Tip pretrage ---
+    search_mode = st.sidebar.radio(
+        "Tip pretrage:",
+        ["Pretraga naslova", "Pretraga sadržaja (PDF)"],
+        help="Pretraga sadržaja traži riječi unutar PDF dokumenata"
+    )
+    
+    search_query = st.sidebar.text_input("Unesi ključnu riječ:")
 
     # --- LOGIKA PRETRAGE ---
-    filtered_df = df.copy()
-    if selected_kategorija != 'Sve': filtered_df = filtered_df[filtered_df['kategorija'] == selected_kategorija]
-    if selected_godina != 'Sve': filtered_df = filtered_df[filtered_df['godina'] == selected_godina]
-    if search_query: filtered_df = filtered_df[filtered_df['naziv'].str.contains(search_query, case=False, na=False)]
-
-    # --- PRIKAZ REZULTATA ---
-    st.write(f"📄 Pronađeno **{len(filtered_df)}** dokumenata.")
+    if search_mode == "Pretraga sadržaja (PDF)" and search_query:
+        st.subheader(f"🔎 Rezultati pretrage sadržaja za: '{search_query}'")
+        
+        if not full_text_docs:
+            st.warning("⚠️ Baza sadržaja još nije kreirana. Pokrenite 'extract_text.py' skriptu.")
+        else:
+            results_found = 0
+            for doc in full_text_docs:
+                if search_query.lower() in doc['sadrzaj'].lower():
+                    results_found += 1
+                    
+                    # Pronađi kontekst (rečenicu gdje se pojavljuje)
+                    text = doc['sadrzaj']
+                    pos = text.lower().find(search_query.lower())
+                    start = max(0, pos - 100)
+                    end = min(len(text), pos + len(search_query) + 150)
+                    context = text[start:end].strip()
+                    
+                    with st.container():
+                        st.markdown(f"📁 [{doc['naziv']}]({doc['link']})")
+                        st.caption(f"📂 {doc['kategorija']} | 📅 {doc['godina']}")
+                        st.info(f"💬 ...{context}...")
+                        st.divider()
+            
+            if results_found == 0:
+                st.info("Nema rezultata u sadržaju. Pokušaj sa drugom riječi.")
+            else:
+                st.success(f"✅ Pronađeno u {results_found} dokumenata. [ DISCLAMER: Svi dokumenti se NE PRETRAŽUJU! ]")
     
-    for index, row in filtered_df.iterrows():
-        with st.container():
-            st.markdown(f"📁 [{row['naziv']}]({row['link']})")
-            st.caption(f"📂 {row['kategorija']} | 📅 {row['godina']}")
-            st.divider()
+    else:
+        # Standardna pretraga naslova
+        filtered_df = df.copy()
+        if selected_kategorija != 'Sve': filtered_df = filtered_df[filtered_df['kategorija'] == selected_kategorija]
+        if selected_godina != 'Sve': filtered_df = filtered_df[filtered_df['godina'] == selected_godina]
+        if search_query: filtered_df = filtered_df[filtered_df['naziv'].str.contains(search_query, case=False, na=False)]
 
-    # --- ZVANIČNI DISCLAIMER ---
+        st.write(f"📄 Pronađeno **{len(filtered_df)}** dokumenata.")
+        
+        for index, row in filtered_df.iterrows():
+            with st.container():
+                st.markdown(f"📁 [{row['naziv']}]({row['link']})")
+                st.caption(f"📂 {row['kategorija']} | 📅 {row['godina']}")
+                st.divider()
+
+    # --- DISCLAIMER ---
     st.markdown("---")
     st.caption(
         "⚠️ **Izjava o odricanju odgovornosti:** Ovo je nezavisna, open-source aplikacija kreirana u edukativne svrhe. "
